@@ -936,21 +936,21 @@
           이름: p.name, 남은자리: p.available, 요금: p.fee, 운영시간: p.hours, 거리: p.distance
         })));
         
-        const prompt = `사용자의 질문: "${val}"\n\n주차장 데이터: ${dbContext}\n\n위 데이터를 바탕으로 사용자의 조건(가격, 거리, 남은 자리 등)에 가장 잘 맞는 주차장을 추천해줘. 답변은 2-3문장으로 핵심만 친절하게 말해줘.`;
+        // ✅ API 스키마 충돌을 방지하기 위해 시스템 지시사항을 프롬프트 본문 최상단에 안전하게 병합
+        const prompt = `[시스템 지시사항]\n당신은 사용자에게 딱 맞는 주차장을 찾아주는 훌륭한 주차 비서 '주차해결사 AI'입니다.\n\n[사용자 질문]\n"${val}"\n\n[주차장 데이터]\n${dbContext}\n\n위 데이터를 바탕으로 사용자의 조건(가격, 거리, 남은 자리 등)에 가장 잘 맞는 주차장을 추천해줘. 답변은 2-3문장으로 핵심만 친절하게 말해줘.`;
         
         const result = await fetchWithRetry(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            systemInstruction: { parts: [{ text: "당신은 사용자에게 딱 맞는 주차장을 찾아주는 훌륭한 주차 비서 '주차해결사 AI'입니다." }] }
+            contents: [{ parts: [{ text: prompt }] }]
           })
         });
 
         const responseText = result.candidates?.[0]?.content?.parts?.[0]?.text || '죄송합니다. 추천을 불러오지 못했습니다.';
         
-        // 4. 로딩 삭제 후 AI 답변 말풍선 추가
-        document.getElementById('ai-chat-loading').remove();
+        // 4. 로딩 삭제 후 AI 답변 말풍선 추가 (안전하게 ? 옵셔널 체이닝 추가)
+        document.getElementById('ai-chat-loading')?.remove();
         
         const aiMsgHTML = `
           <div class="flex items-start">
@@ -965,7 +965,7 @@
         msgContainer.insertAdjacentHTML('beforeend', aiMsgHTML);
 
       } catch (error) {
-        document.getElementById('ai-chat-loading').remove();
+        document.getElementById('ai-chat-loading')?.remove();
         const errorHTML = `
           <div class="flex items-start">
             <div class="w-8 h-8 bg-red-400 text-white rounded-full flex items-center justify-center shrink-0 mr-3">
@@ -983,118 +983,6 @@
         lucide.createIcons();
         msgContainer.scrollTop = msgContainer.scrollHeight;
       }
-    }
-
-
-    // ==========================================
-    // 불법 주차 신고 로직
-    // ==========================================
-    const reportFileInput = document.getElementById('report-file-input');
-    const photoPreview = document.getElementById('report-photo-preview');
-    const photoPlaceholder = document.getElementById('report-photo-placeholder');
-    const photoImg = document.getElementById('report-photo-img');
-    const btnAiAnalyze = document.getElementById('btn-ai-analyze');
-    
-    const inputLoc = document.getElementById('report-location');
-    const inputPlate = document.getElementById('report-plate');
-    const inputDesc = document.getElementById('report-desc');
-    const btnSubmitReport = document.getElementById('btn-report-submit');
-
-    function checkReportFormReady() {
-      const isReady = reportData.photoUrl && reportData.location && reportData.plateNumber;
-      btnSubmitReport.disabled = !isReady;
-    }
-
-    [inputLoc, inputPlate, inputDesc].forEach(el => {
-      el.addEventListener('input', (e) => {
-        if(el.id === 'report-location') reportData.location = e.target.value;
-        if(el.id === 'report-plate') reportData.plateNumber = e.target.value;
-        if(el.id === 'report-desc') reportData.description = e.target.value;
-        checkReportFormReady();
-      });
-    });
-
-    reportFileInput.addEventListener('change', (e) => {
-      if(e.target.files && e.target.files[0]) {
-        reportData.photoFile = e.target.files[0];
-        reportData.photoUrl = URL.createObjectURL(reportData.photoFile);
-        
-        photoImg.src = reportData.photoUrl;
-        photoPreview.classList.remove('hidden');
-        photoPlaceholder.classList.add('hidden');
-        btnAiAnalyze.classList.remove('hidden');
-        checkReportFormReady();
-      }
-    });
-
-    btnAiAnalyze.addEventListener('click', async () => {
-      if(!reportData.photoFile) return;
-      btnAiAnalyze.disabled = true;
-      btnAiAnalyze.innerHTML = `<i data-lucide="loader-2" class="w-4 h-4 mr-2 animate-spin"></i> 사진 분석 중...`;
-      lucide.createIcons();
-
-      try {
-        const base64String = await getBase64(reportData.photoFile);
-        const base64Data = base64String.split(',')[1];
-        
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
-        const prompt = "이 사진은 불법 주차 신고를 위한 차량 사진입니다. 사진을 분석해서 두 가지를 추출해주세요: 1) 차량 번호판이 보인다면 번호를 추출하세요. 안 보이면 '미상'이라고 적으세요. 2) 불법 주차 정황(예: 횡단보도 위, 소화전 옆, 이중주차, 갓길 등) 및 차량 색상을 1문장으로 묘사하세요. 응답은 반드시 아래 JSON 형식으로만 반환하세요: {\"plateNumber\": \"차량번호\", \"description\": \"정황설명\"}";
-
-        const payload = {
-          contents: [{
-            role: "user",
-            parts: [{ text: prompt }, { inlineData: { mimeType: reportData.photoFile.type, data: base64Data } }]
-          }],
-          generationConfig: { 
-            responseMimeType: "application/json",
-            responseSchema: { type: "OBJECT", properties: { plateNumber: { type: "STRING" }, description: { type: "STRING" } } }
-          }
-        };
-
-        const result = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        if (text) {
-          const parsed = JSON.parse(text);
-          if(parsed.plateNumber !== '미상') {
-            reportData.plateNumber = parsed.plateNumber;
-            inputPlate.value = parsed.plateNumber;
-          }
-          if(parsed.description) {
-            reportData.description = parsed.description;
-            inputDesc.value = parsed.description;
-          }
-          checkReportFormReady();
-          showToast('AI가 사진 분석을 완료했습니다.');
-        }
-      } catch (error) {
-        console.error(error);
-        alert("AI 분석에 실패했습니다. 직접 입력해주세요.");
-      } finally {
-        btnAiAnalyze.disabled = false;
-        btnAiAnalyze.innerHTML = `<i data-lucide="sparkles" class="w-4 h-4 mr-2"></i> ✨ AI 사진 분석 및 자동 입력`;
-        lucide.createIcons();
-      }
-    });
-
-    btnSubmitReport.addEventListener('click', () => {
-      navigateTo('report', 'ai');
-      setTimeout(() => {
-        authStep = 'select';
-        renderAuthStep();
-        navigateTo('report', 'auth');
-      }, 2000);
-    });
-
-    function resetReportData() {
-      reportData = { location: '', plateNumber: '', description: '', photoUrl: null, photoFile: null };
-      inputLoc.value = ''; inputPlate.value = ''; inputDesc.value = '';
-      photoPreview.classList.add('hidden');
-      photoPlaceholder.classList.remove('hidden');
-      btnAiAnalyze.classList.add('hidden');
-      reportFileInput.value = '';
-      authStep = 'select';
-      checkReportFormReady();
     }
 
     // ==========================================
